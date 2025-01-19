@@ -1,0 +1,33 @@
+# Core Libraries
+numpy
+pandas
+matplotlib
+
+# Text Processing
+transformers
+datasets
+
+# Image Processing
+torch
+torchvision
+open_clip_torch
+
+# Audio Processing
+openai-whisper
+
+# Video Processing
+opencv-python
+opencv-python-headless
+
+# Multimodal Fusion
+langchain
+tensorflow
+
+# Utilities
+tqdm
+scipy
+seaborn
+
+# Additional Tools
+jupyter
+notebook
