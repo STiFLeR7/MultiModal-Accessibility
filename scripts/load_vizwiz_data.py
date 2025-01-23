@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Iterator
 from PIL import Image
 
 # Paths to preprocessed data
@@ -32,45 +32,58 @@ def load_image(image_path: str) -> Image.Image:
     """
     return Image.open(image_path).convert("RGB")
 
-def load_data(split: str) -> Tuple[List[Dict], List[Image.Image]]:
+def batch_loader(data: List[Dict], batch_size: int) -> Iterator[List[Dict]]:
     """
-    Load both annotations and images for a given split.
+    Yield batches of data for efficient processing.
+    Args:
+        data (List[Dict]): The dataset.
+        batch_size (int): Number of items per batch.
+    Yields:
+        Iterator[List[Dict]]: Batches of data.
+    """
+    for i in range(0, len(data), batch_size):
+        yield data[i:i + batch_size]
+
+def load_data_in_batches(split: str, batch_size: int = 100) -> Iterator[Tuple[List[Dict], List[Image.Image]]]:
+    """
+    Load annotations and images in batches.
     Args:
         split (str): Dataset split ('train', 'val', 'test').
+        batch_size (int): Number of items per batch.
     Returns:
-        Tuple[List[Dict], List[Image.Image]]: Annotations and images.
+        Iterator[Tuple[List[Dict], List[Image.Image]]]: Batches of annotations and images.
     """
-    # Load annotations
     annotations = load_annotations(split)
-
-    # Load images
-    images = []
-    for ann in annotations:
-        img_path = os.path.join(IMAGE_DIR, split, ann["image_id"])
-        if os.path.exists(img_path):
-            images.append(load_image(img_path))
-        else:
-            print(f"Warning: Image not found at {img_path}")
-    
-    return annotations, images
+    for batch in batch_loader(annotations, batch_size):
+        images = []
+        for ann in batch:
+            img_path = os.path.join(IMAGE_DIR, split, ann["image_id"])
+            if os.path.exists(img_path):
+                images.append(load_image(img_path))
+            else:
+                print(f"Warning: Image not found at {img_path}")
+        yield batch, images
 
 def main():
-    # Example: Load train split
     split = "train"
-    print(f"Loading {split} split...")
+    print(f"Loading {split} split in batches...")
     
-    annotations, images = load_data(split)
-    print(f"Loaded {len(annotations)} annotations and {len(images)} images.")
+    batch_size = 50  # Adjust batch size based on your system's memory
+    data_loader = load_data_in_batches(split, batch_size)
     
-    # Print a sample annotation
-    if annotations:
+    for i, (annotations, images) in enumerate(data_loader):
+        print(f"\nBatch {i + 1}:")
+        print(f"- Loaded {len(annotations)} annotations.")
+        print(f"- Loaded {len(images)} images.")
+        
+        # Print a sample annotation
         print("\nSample Annotation:")
         print(json.dumps(annotations[0], indent=2))
-    
-    # Show a sample image
-    if images:
+        
+        # Show a sample image (optional)
         print("\nDisplaying a sample image...")
         images[0].show()
+        break  # Only process the first batch for testing
 
 if __name__ == "__main__":
     main()
