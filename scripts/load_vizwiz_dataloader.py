@@ -126,11 +126,10 @@ def main():
     # Iterate through batches
     for i, batch in enumerate(dataloader):
         print(f"\nBatch {i + 1}:")
-        print(f"- Image batch size: {batch['image'].shape}")
-        print(f"- Tokenized question shape: {batch['input_ids'].shape}")
-        print(f"- Sample answers: {batch['answers'][0]}")
-        break  # Only test the first batch
-
+        for idx in range(min(5, len(batch["answers"]))):  # Display first 5 answers in the batch
+            print(f"- Answer {idx + 1}: {batch['answers'][idx]}")
+        if i >= 4:
+            break
 
 if __name__ == "__main__":
     main()
