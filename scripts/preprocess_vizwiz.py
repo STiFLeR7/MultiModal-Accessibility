@@ -1,89 +1,65 @@
 import os
 import json
-from pathlib import Path
-from typing import List, Dict, Tuple, Iterator
-from PIL import Image
+import shutil
+from tqdm import tqdm
 
-# Paths to preprocessed data
-BASE_DIR = "D:/MultiModal-Accessibility/preprocessed/VizWiz-2023"
-ANNOTATION_DIR = os.path.join(BASE_DIR, "annotations")
-IMAGE_DIR = os.path.join(BASE_DIR, "images")
+# Paths
+DATASET_DIR = "D:/MultiModal-Accessibility/datasets/VizWiz-2023"
+ANNOTATION_DIR = os.path.join(DATASET_DIR, "Annotations")
+PREPROCESSED_DIR = "D:/MultiModal-Accessibility/preprocessed/VizWiz-2023"
 
-def load_annotations(split: str) -> List[Dict]:
-    """
-    Load annotations for a given data split.
-    Args:
-        split (str): Dataset split ('train', 'val', 'test').
-    Returns:
-        List[Dict]: List of annotation dictionaries.
-    """
-    annotation_file = os.path.join(ANNOTATION_DIR, f"{split}.json")
+# Ensure output directories exist
+os.makedirs(os.path.join(PREPROCESSED_DIR, "annotations"), exist_ok=True)
+os.makedirs(os.path.join(PREPROCESSED_DIR, "images/train"), exist_ok=True)
+os.makedirs(os.path.join(PREPROCESSED_DIR, "images/val"), exist_ok=True)
+os.makedirs(os.path.join(PREPROCESSED_DIR, "images/test"), exist_ok=True)
+
+
+def preprocess_annotations(annotation_file, output_file):
+    """Preprocess annotations and save them to a file."""
     with open(annotation_file, "r", encoding="utf-8") as f:
-        annotations = json.load(f)
-    return annotations
+        data = json.load(f)
 
-def load_image(image_path: str) -> Image.Image:
-    """
-    Load an image given its path.
-    Args:
-        image_path (str): Path to the image file.
-    Returns:
-        PIL.Image.Image: Loaded image object.
-    """
-    return Image.open(image_path).convert("RGB")
+    processed_data = []
+    for item in tqdm(data, desc="Processing annotations"):
+        # Extract the most confident answer (or "unanswerable" if no valid answers exist)
+        answers = item.get("answers", [])
+        if answers:
+            # Filter answers with "yes" confidence and pick the first one
+            confident_answers = [ans["answer"] for ans in answers if ans["answer_confidence"] == "yes"]
+            representative_answer = confident_answers[0] if confident_answers else "unanswerable"
+        else:
+            representative_answer = "unanswerable"
 
-def batch_loader(data: List[Dict], batch_size: int) -> Iterator[List[Dict]]:
-    """
-    Yield batches of data for efficient processing.
-    Args:
-        data (List[Dict]): The dataset.
-        batch_size (int): Number of items per batch.
-    Yields:
-        Iterator[List[Dict]]: Batches of data.
-    """
-    for i in range(0, len(data), batch_size):
-        yield data[i:i + batch_size]
+        # Adjust keys based on actual dataset structure
+        processed_data.append({
+            "image_id": item.get("image", item.get("image_id")),
+            "question": item.get("question", ""),
+            "answer": representative_answer,  # Use the representative answer
+        })
 
-def load_data_in_batches(split: str, batch_size: int = 100) -> Iterator[Tuple[List[Dict], List[Image.Image]]]:
-    """
-    Load annotations and images in batches.
-    Args:
-        split (str): Dataset split ('train', 'val', 'test').
-        batch_size (int): Number of items per batch.
-    Returns:
-        Iterator[Tuple[List[Dict], List[Image.Image]]]: Batches of annotations and images.
-    """
-    annotations = load_annotations(split)
-    for batch in batch_loader(annotations, batch_size):
-        images = []
-        for ann in batch:
-            img_path = os.path.join(IMAGE_DIR, split, ann["image_id"])
-            if os.path.exists(img_path):
-                images.append(load_image(img_path))
-            else:
-                print(f"Warning: Image not found at {img_path}")
-        yield batch, images
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(processed_data, f, indent=4)
 
-def main():
-    split = "train"
-    print(f"Loading {split} split in batches...")
-    
-    batch_size = 50  # Adjust batch size based on your system's memory
-    data_loader = load_data_in_batches(split, batch_size)
-    
-    for i, (annotations, images) in enumerate(data_loader):
-        print(f"\nBatch {i + 1}:")
-        print(f"- Loaded {len(annotations)} annotations.")
-        print(f"- Loaded {len(images)} images.")
-        
-        # Print a sample annotation
-        print("\nSample Annotation:")
-        print(json.dumps(annotations[0], indent=2))
-        
-        # Show a sample image (optional)
-        print("\nDisplaying a sample image...")
-        images[0].show()
-        break  # Only process the first batch for testing
+def preprocess_images(source_folder, dest_folder):
+    """Copy images to the preprocessed folder."""
+    for root, _, files in os.walk(source_folder):
+        for file in tqdm(files, desc=f"Processing images in {source_folder}"):
+            if file.endswith((".jpg", ".jpeg", ".png")):  # Check for image files
+                src_path = os.path.join(root, file)
+                dest_path = os.path.join(dest_folder, file)
+                shutil.copy(src_path, dest_path)  # Copy the file
 
-if __name__ == "__main__":
-    main()
+
+# Process each dataset split
+splits = ["train", "val", "test"]
+for split in splits:
+    annotation_file = os.path.join(ANNOTATION_DIR, f"{split}.json")
+    output_annotation_file = os.path.join(PREPROCESSED_DIR, "annotations", f"{split}.json")
+    preprocess_annotations(annotation_file, output_annotation_file)
+
+    source_image_folder = os.path.join(DATASET_DIR, split)
+    dest_image_folder = os.path.join(PREPROCESSED_DIR, "images", split)
+    preprocess_images(source_image_folder, dest_image_folder)
+
+print("Preprocessing completed successfully!")
