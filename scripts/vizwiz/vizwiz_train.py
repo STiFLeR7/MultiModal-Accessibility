@@ -3,24 +3,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from transformers import AutoTokenizer
+from transformers import CLIPModel, CLIPProcessor
 import torchvision.transforms as T
-from torchvision.models import resnet50
 from tqdm import tqdm
 from PIL import Image
 import json
 import random
-from transformers import CLIPModel, CLIPProcessor
 
 
 def build_answer_vocab(annotations_file):
-    """
-    Build a vocabulary of answers from the dataset.
-    Args:
-        annotations_file (str): Path to the annotations JSON file.
-    Returns:
-        dict: A mapping from answers to integer labels.
-    """
+    """Builds a vocabulary of answers from the dataset."""
     with open(annotations_file, "r", encoding="utf-8") as f:
         annotations = json.load(f)
 
@@ -34,9 +26,9 @@ def build_answer_vocab(annotations_file):
 
 
 class VizWizDataset(torch.utils.data.Dataset):
-    def __init__(self, annotations_file, image_dir, tokenizer_model="openai/clip-vit-base-patch32", max_length=77, answer_vocab=None):
+    def __init__(self, annotations_file, image_dir, max_length=77, answer_vocab=None):
         self.image_dir = image_dir
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
+        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         self.max_length = max_length
         self.answer_vocab = answer_vocab
 
@@ -53,7 +45,7 @@ class VizWizDataset(torch.utils.data.Dataset):
         # Balance between valid answers and "unanswerable"
         valid = [ann for ann in self.annotations if ann["answer"] != "unanswerable"]
         unanswerable = [ann for ann in self.annotations if ann["answer"] == "unanswerable"]
-        self.annotations = valid + random.sample(unanswerable, min(len(valid), len(unanswerable)))
+        self.annotations = valid + random.sample(unanswerable, min(len(valid), len(unanswerable) // 2))  # Reduce unanswerable answers
 
     def __len__(self):
         return len(self.annotations)
@@ -62,16 +54,17 @@ class VizWizDataset(torch.utils.data.Dataset):
         annotation = self.annotations[idx]
         image_path = os.path.join(self.image_dir, annotation["image_id"])
         image = Image.open(image_path).convert("RGB")
-        image = self.image_transform(image)
 
         question = annotation["question"]
-        tokenized_question = self.tokenizer(
+        tokenized_question = self.processor.tokenizer(
             question,
             padding="max_length",
             truncation=True,
-            max_length=self.max_length,  # Set to 77 for CLIP
+            max_length=self.max_length,  # CLIP requires max_length=77
             return_tensors="pt",
         )
+
+        image = self.processor(images=image, return_tensors="pt")["pixel_values"].squeeze(0)
 
         # Convert answer to class label
         answer = self.answer_vocab.get(annotation["answer"], -1)  # -1 for unknown answers
@@ -83,33 +76,24 @@ class VizWizDataset(torch.utils.data.Dataset):
         }
 
 
-
 class CLIPVQAModel(nn.Module):
     def __init__(self, num_classes):
         super(CLIPVQAModel, self).__init__()
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-        self.image_encoder = resnet50(pretrained=True)
-        self.image_encoder.fc = nn.Linear(self.image_encoder.fc.in_features, 512)
-
-        # Projection layers to align feature dimensions
-        self.text_projector = nn.Linear(self.clip_model.config.text_config.hidden_size, 512)
-        self.image_projector = nn.Identity()  # ResNet-50 already outputs 512
 
         self.classifier = nn.Sequential(
-            nn.Linear(512 + 512, 512),  # Combine text and image embeddings
+            nn.Linear(self.clip_model.config.projection_dim * 2, 512),  # CLIP's embedding dimension is 512
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(512, num_classes),
         )
 
     def forward(self, images, input_ids, attention_mask):
-        # Encode text using CLIP
-        text_features = self.clip_model.text_model(input_ids=input_ids, attention_mask=attention_mask).pooler_output
-        text_features = self.text_projector(text_features)
+        # CLIP text encoding
+        text_features = self.clip_model.get_text_features(input_ids=input_ids, attention_mask=attention_mask)
 
-        # Encode images using ResNet-50
-        image_features = self.image_encoder(images)
-        image_features = self.image_projector(image_features)
+        # CLIP image encoding
+        image_features = self.clip_model.get_image_features(pixel_values=images)
 
         # Combine image and text features
         combined_features = torch.cat((text_features, image_features), dim=1)
@@ -135,7 +119,7 @@ def train(model, dataloader, optimizer, criterion, scheduler, device, epochs, ch
 
             running_loss += loss.item()
 
-        scheduler.step()  # Adjust learning rate
+        scheduler.step(running_loss)  # Adjust learning rate if validation loss plateaus
         print(f"Epoch {epoch + 1}/{epochs}, Loss: {running_loss / len(dataloader)}")
 
         # Save checkpoint
@@ -175,7 +159,7 @@ def main():
     image_dir = "D:/MultiModal-Accessibility/preprocessed/VizWiz-2023/images/train"
     batch_size = 16
     learning_rate = 1e-5
-    epochs = 5
+    epochs = 15  # Increased from 5 to 15
 
     # Build answer vocabulary
     answer_vocab = build_answer_vocab(annotations_file)
@@ -196,7 +180,7 @@ def main():
     # Model, optimizer, scheduler, and loss function
     model = CLIPVQAModel(num_classes=num_classes).to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.7)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
     criterion = nn.CrossEntropyLoss()
 
     # Train the model
