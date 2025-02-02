@@ -5,6 +5,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from transformers import CLIPModel, CLIPProcessor
 import torchvision.transforms as T
+from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from tqdm import tqdm
 from PIL import Image
 import json
@@ -42,10 +43,10 @@ class VizWizDataset(torch.utils.data.Dataset):
         with open(annotations_file, "r", encoding="utf-8") as f:
             self.annotations = json.load(f)
 
-        # Balance between valid answers and "unanswerable"
+        # Balance "unanswerable" answers instead of removing too many
         valid = [ann for ann in self.annotations if ann["answer"] != "unanswerable"]
         unanswerable = [ann for ann in self.annotations if ann["answer"] == "unanswerable"]
-        self.annotations = valid + random.sample(unanswerable, min(len(valid), len(unanswerable) // 2))  # Reduce unanswerable answers
+        self.annotations = valid + random.sample(unanswerable, min(len(valid) * 3 // 4, len(unanswerable)))
 
     def __len__(self):
         return len(self.annotations)
@@ -64,7 +65,7 @@ class VizWizDataset(torch.utils.data.Dataset):
             return_tensors="pt",
         )
 
-        image = self.processor(images=image, return_tensors="pt")["pixel_values"].squeeze(0)
+        image = self.image_transform(image)
 
         # Convert answer to class label
         answer = self.answer_vocab.get(annotation["answer"], -1)  # -1 for unknown answers
@@ -76,15 +77,20 @@ class VizWizDataset(torch.utils.data.Dataset):
         }
 
 
-class CLIPVQAModel(nn.Module):
+class VQAModel(nn.Module):
     def __init__(self, num_classes):
-        super(CLIPVQAModel, self).__init__()
+        super(VQAModel, self).__init__()
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
+        # Use EfficientNet-B3 as the image encoder
+        self.image_encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
+        self.image_encoder.classifier = nn.Linear(self.image_encoder.classifier[1].in_features, 512)
+
+        # Classifier with increased dropout to prevent overfitting
         self.classifier = nn.Sequential(
-            nn.Linear(self.clip_model.config.projection_dim * 2, 512),  # CLIP's embedding dimension is 512
+            nn.Linear(512 + self.clip_model.config.projection_dim, 512),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),  # Increased dropout from 0.3 to 0.5
             nn.Linear(512, num_classes),
         )
 
@@ -92,8 +98,8 @@ class CLIPVQAModel(nn.Module):
         # CLIP text encoding
         text_features = self.clip_model.get_text_features(input_ids=input_ids, attention_mask=attention_mask)
 
-        # CLIP image encoding
-        image_features = self.clip_model.get_image_features(pixel_values=images)
+        # EfficientNet image encoding
+        image_features = self.image_encoder(images)
 
         # Combine image and text features
         combined_features = torch.cat((text_features, image_features), dim=1)
@@ -159,7 +165,7 @@ def main():
     image_dir = "D:/MultiModal-Accessibility/preprocessed/VizWiz-2023/images/train"
     batch_size = 16
     learning_rate = 1e-5
-    epochs = 15  # Increased from 5 to 15
+    epochs = 15  # Keeping at 15 for better convergence
 
     # Build answer vocabulary
     answer_vocab = build_answer_vocab(annotations_file)
@@ -178,9 +184,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Model, optimizer, scheduler, and loss function
-    model = CLIPVQAModel(num_classes=num_classes).to(device)
+    model = VQAModel(num_classes=num_classes).to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=4)
     criterion = nn.CrossEntropyLoss()
 
     # Train the model
