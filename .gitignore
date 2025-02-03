@@ -1,0 +1,23 @@
+# Ignore dataset and preprocessed files
+datasets/
+preprocessed/
+
+# Ignore checkpoints and logs
+*.pth
+*.log
+
+# Ignore Python cache and temporary files
+__pycache__/
+*.pyc
+*.pyo
+*.tmp
+*.swp
+*.swo
+.DS_Store
+
+# Ignore virtual environments
+venv/
+.env/
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
