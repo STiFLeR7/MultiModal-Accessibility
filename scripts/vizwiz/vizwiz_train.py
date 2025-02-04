@@ -13,7 +13,6 @@ import random
 
 
 def build_answer_vocab(annotations_file):
-    """Builds a vocabulary of answers from the dataset."""
     with open(annotations_file, "r", encoding="utf-8") as f:
         annotations = json.load(f)
 
