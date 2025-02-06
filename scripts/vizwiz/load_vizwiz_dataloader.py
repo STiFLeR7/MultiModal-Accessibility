@@ -96,16 +96,7 @@ def collate_fn(batch):
 
 
 def get_vizwiz_dataloader(annotations_file, image_dir, batch_size=32, shuffle=True):
-    """
-    Create a DataLoader for the VizWiz dataset.
-    Args:
-        annotations_file (str): Path to the annotations JSON file.
-        image_dir (str): Path to the directory containing images.
-        batch_size (int): Number of samples per batch.
-        shuffle (bool): Whether to shuffle the dataset.
-    Returns:
-        DataLoader: PyTorch DataLoader for the dataset.
-    """
+
     dataset = VizWizDataset(annotations_file, image_dir)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn)
     return dataloader
