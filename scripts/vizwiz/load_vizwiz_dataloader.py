@@ -77,10 +77,6 @@ class VizWizDataset(Dataset):
 
 
 def collate_fn(batch):
-    """
-    Custom collate function to ensure all batch data is valid.
-    Skips invalid entries and ensures no field is None.
-    """
     sanitized_batch = []
     for item in batch:
         if item["image"] is not None and item["input_ids"] is not None:
